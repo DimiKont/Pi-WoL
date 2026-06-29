@@ -1,10 +1,16 @@
 #!/bin/bash
 
-# Pi-WoL Self-Contained Installer Philosophy (No Git Required)
+# Pi-WoL Sudo Enforcement Layer (Fixed Heredoc Substitutions)
 COLOR_RED='\033[0;31m'
 COLOR_GREEN='\033[0;32m'
 COLOR_BLUE='\033[0;34m'
 COLOR_RESET='\033[0m'
+
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${COLOR_RED}  [✗] Error: Privileged environment context required.${COLOR_RESET}"
+    echo -e "      Please run the installation script using: ${COLOR_BLUE}sudo bash${COLOR_RESET}"
+    exit 1
+fi
 
 clear
 
@@ -15,6 +21,9 @@ echo -e "${COLOR_RED}      |    | | |__| |__| |___ ${COLOR_RESET}"
 echo -e "${COLOR_BLUE}=========================================${COLOR_RESET}"
 echo -e "       Pi-WoL Appliance Installer Core   \n"
 
+REAL_USER=${SUDO_USER:-$(whoami)}
+REAL_HOME=$(eval echo ~$REAL_USER)
+
 run_with_spinner() {
     local message="$1"
     local command="$2"
@@ -23,9 +32,7 @@ run_with_spinner() {
     local pid=$!
     local spinner=( '/' '-' '\\' '|' )
     
-    # 🕵️‍♂️ HIDE CURSOR: Replaced "tput civvis" with a universal ANSI sequence
     echo -ne "\033[?25l"
-    
     while kill -0 $pid 2>/dev/null; do
         for icon in "${spinner[@]}"; do
             echo -ne "\r  [${COLOR_BLUE}${icon}${COLOR_RESET}] ${message}..."
@@ -34,8 +41,6 @@ run_with_spinner() {
     done
     wait $pid
     local return_status=$?
-    
-    # 👁️ RESTORE CURSOR: Replaced "tput cnorm" with a universal ANSI sequence
     echo -ne "\033[?25h"
     
     if [ $return_status -eq 0 ]; then
@@ -49,16 +54,16 @@ run_with_spinner() {
 # --- START INSTALLATION FLOW ---
 
 run_with_spinner "Synchronizing Linux core repositories" \
-    "sudo apt-get update -y"
+    "apt-get update -y"
 
 run_with_spinner "Installing foundational tooling layers (pip3)" \
-    "sudo apt-get install -y python3-pip iproute2"
+    "apt-get install -y python3-pip iproute2"
 
 run_with_spinner "Building destination path nodes (~/Pi-WoL)" \
-    "mkdir -p ~/Pi-WoL/core ~/Pi-WoL/templates"
+    "sudo -u $REAL_USER mkdir -p $REAL_HOME/Pi-WoL/core $REAL_HOME/Pi-WoL/templates"
 
 # 🛠️ STREAMING STEP 1: WRITE CORE NETWORK LOGIC DIRECTLY
-run_with_spinner "Writing internal network driver engines" "cat << 'EOF' > ~/Pi-WoL/core/network.py
+run_with_spinner "Writing internal network driver engines" "sudo -u $REAL_USER cat << 'EOF' > $REAL_HOME/Pi-WoL/core/network.py
 import subprocess
 import re
 import socket
@@ -110,7 +115,7 @@ def execute_linux_ssh_sleep(ip_address, username):
 EOF"
 
 # 🛠️ STREAMING STEP 2: WRITE APPMANAGER APP ENGINE DIRECTLY
-run_with_spinner "Writing application main core framework" "cat << 'EOF' > ~/Pi-WoL/app.py
+run_with_spinner "Writing application main core framework" "sudo -u $REAL_USER cat << 'EOF' > $REAL_HOME/Pi-WoL/app.py
 import os
 import json
 from fastapi import FastAPI, Request, Form, BackgroundTasks
@@ -197,7 +202,7 @@ async def web_wake_device(alias: str, username: str = Form(None), password: str 
     return RedirectResponse(url=\"/\", status_code=303)
 
 def execute_winrm_sleep(ip, user, text_pass):
-    sleep_payload = \"\$rundll = '[DllImport(\\\"powrprof.dll\\\")] public static extern bool SetSuspendState(bool hiber, bool force, bool disable);'; \$type = Add-Type -MemberDefinition \$rundll -Name \\\"Win32Power\\\" -Namespace \\\"Win32\\\" -PassThru; \$type::SetSuspendState(\$false, \$false, \$false)\"
+    sleep_payload = '$rundll = \"[DllImport(\\\"powrprof.dll\\\")] public static extern bool SetSuspendState(bool hiber, bool force, bool disable);\"; $type = Add-Type -MemberDefinition $rundll -Name \"Win32Power\" -Namespace \"Win32\" -PassThru; $type::SetSuspendState($false, $false, $false)'
     try:
         import winrm
         session = winrm.Session(ip, auth=(user, text_pass), transport='ntlm', read_timeout_sec=8, operation_timeout_sec=4)
@@ -225,7 +230,7 @@ async def web_sleep_device(alias: str, bg_tasks: BackgroundTasks, username: str 
 EOF"
 
 # 🛠️ STREAMING STEP 3: WRITE HTML PANEL DASHBOARD DIRECTLY
-run_with_spinner "Writing application frontend interface layouts" "cat << 'EOF' > ~/Pi-WoL/templates/index.html
+run_with_spinner "Writing application frontend interface layouts" "sudo -u $REAL_USER cat << 'EOF' > $REAL_HOME/Pi-WoL/templates/index.html
 <!DOCTYPE html>
 <html lang='en'>
 <head>
@@ -360,7 +365,7 @@ run_with_spinner "Writing application frontend interface layouts" "cat << 'EOF' 
             try {
                 const res = await fetch('/api/add', { method: 'POST', body: fd });
                 if (res.ok) { lbl.className = \"text-[10px] text-emerald-400 font-bold block mt-1.5\"; lbl.innerHTML = \"Node committed successfully!\"; setTimeout(() => { window.location.reload(); }, 800); }
-                else { const data = await res.json(); lbl.className = \"text-[10px] text-rose-400 font-bold block mt-1.5\"; lbl.innerHTML = `Conflict: ${data.error}`; }
+                else { const data = await res.json(); lbl.className = \"text-[10px] text-rose-400 font-bold block mt-1.5\"; lbl.innerHTML = \"Conflict: \" + data.error; }
             } catch { lbl.className = \"text-[10px] text-rose-500 block mt-1.5\"; lbl.innerHTML = \"Error routing engine data fields.\"; }
         }
         async function triggerAutoMacLookup() {
@@ -368,18 +373,18 @@ run_with_spinner "Writing application frontend interface layouts" "cat << 'EOF' 
             if (!ipVal) { label.className = \"text-[10px] text-rose-400 font-bold block mt-1.5\"; label.innerHTML = \"Provide an IP address first.\"; return; }
             label.className = \"text-[10px] text-amber-400 font-medium block mt-1.5 animate-pulse\"; label.innerHTML = \"Refreshing routing cache...\";
             try {
-                const res = await fetch(`/api/lookup/${ipVal}`); const data = await res.json();
+                const res = await fetch('/api/lookup/' + ipVal); const data = await res.json();
                 if (data.success) { macInput.value = data.mac; label.className = \"text-[10px] text-emerald-400 font-bold block mt-1.5\"; label.innerHTML = \"Target resolved and mapped!\"; }
                 else { label.className = \"text-[10px] text-rose-400 block mt-1.5\"; label.innerHTML = \"Passive lookup failed.\"; }
             } catch { label.className = \"text-[10px] text-rose-500 block mt-1.5\"; label.innerHTML = \"Lookup backend endpoint error.\"; }
         }
         function interceptWakeTrigger(alias) {
-            if (SESSION_ACTIVE) { const f = document.createElement('form'); f.method = 'POST'; f.action = `/api/wake/${alias}`; document.body.appendChild(f); f.submit(); }
-            else { document.getElementById('authModalTitle').innerText = \"Wake Authorization Required\"; document.getElementById('authModalForm').action = `/api/wake/${alias}`; document.getElementById('authModal').classList.remove('hidden'); }
+            if (SESSION_ACTIVE) { const f = document.createElement('form'); f.method = 'POST'; f.action = '/api/wake/' + alias; document.body.appendChild(f); f.submit(); }
+            else { document.getElementById('authModalTitle').innerText = \"Wake Authorization Required\"; document.getElementById('authModalForm').action = '/api/wake/' + alias; document.getElementById('authModal').classList.remove('hidden'); }
         }
         function interceptSleepTrigger(alias, os_type) {
-            if (os_type === 'linux' || SESSION_ACTIVE) { const f = document.createElement('form'); f.method = 'POST'; f.action = `/api/sleep/${alias}`; document.body.appendChild(f); f.submit(); }
-            else { document.getElementById('authModalTitle').innerText = \"Sleep Action Authentication\"; document.getElementById('authModalForm').action = `/api/sleep/${alias}`; document.getElementById('authModal').classList.remove('hidden'); }
+            if (os_type === 'linux' || SESSION_ACTIVE) { const f = document.createElement('form'); f.method = 'POST'; f.action = '/api/sleep/' + alias; document.body.appendChild(f); f.submit(); }
+            else { document.getElementById('authModalTitle').innerText = \"Sleep Action Authentication\"; document.getElementById('authModalForm').action = '/api/sleep/' + alias; document.getElementById('authModal').classList.remove('hidden'); }
         }
     </script>
 </body>
@@ -390,10 +395,10 @@ run_with_spinner "Deploying runtime application dependencies (fastapi, uvicorn, 
     "pip3 install fastapi uvicorn pywinrm --break-system-packages"
 
 run_with_spinner "Initializing database local layout storage profiles" \
-    "cd ~/Pi-WoL && echo '{}' > devices.json"
+    "cd $REAL_HOME/Pi-WoL && echo '{}' > devices.json"
 
 run_with_spinner "Injecting system administrative permission configurations" \
-    "SUDOERS_RULE=\"\$(whoami) ALL=(ALL) NOPASSWD: /usr/sbin/ip neigh flush *\" && if ! sudo grep -qF \"\$SUDOERS_RULE\" /etc/sudoers; then echo \"\$SUDOERS_RULE\" | sudo tee -a /etc/sudoers; fi"
+    "SUDOERS_RULE=\"$REAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/ip neigh flush *\" && if ! sudo grep -qF \"\$SUDOERS_RULE\" /etc/sudoers; then echo \"\$SUDOERS_RULE\" | sudo tee -a /etc/sudoers; fi"
 
 run_with_spinner "Attaching and launching system daemon background wrapper engine" \
     "sudo tee /etc/systemd/system/piwol.service > /dev/null <<EOF
@@ -402,8 +407,8 @@ Description=Pi-WoL Network Appliance
 After=network.target
 
 [Service]
-User=\$(whoami)
-WorkingDirectory=/home/\$(whoami)/Pi-WoL
+User=$REAL_USER
+WorkingDirectory=$REAL_HOME/Pi-WoL
 ExecStart=/usr/local/bin/uvicorn app:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
@@ -411,12 +416,12 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-sudo systemctl daemon-reload && sudo systemctl enable piwol.service && sudo systemctl restart piwol.service"
+systemctl daemon-reload && systemctl enable piwol.service && systemctl restart piwol.service"
 
 # --- SUCCESS DISPLAY LAYOUT ---
 PI_IP=$(hostname -I | awk '{print $1}')
 echo -e "\n${COLOR_GREEN}=====================================================${COLOR_RESET}"
-echo -e " 🎉 ${COLOR_GREEN}Pi-WoL Installed Successfully Without Git Dependencies!${COLOR_RESET}"
+echo -e " 🎉 ${COLOR_GREEN}Pi-WoL Installed Successfully Under Sudo Contexts!${COLOR_RESET}"
 echo -e " 🌐 Access your dashboard console appliance via:"
 echo -e "    ${COLOR_BLUE}http://${PI_IP}:8000${COLOR_RESET}"
 echo -e "${COLOR_GREEN}=====================================================${COLOR_RESET}"
